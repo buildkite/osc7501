@@ -1,0 +1,18 @@
+steps:
+  - group: ":mag: QA"
+    key: quality_checks
+    steps:
+      - label: ":golangci-lint: lint"
+        command: golangci-lint run --verbose --timeout 3m
+        plugins:
+          - mise#v1.1.5: ~
+
+      - label: ":go: test"
+        artifact_paths:
+          - coverage.out
+          - tests.json
+        command: go test -json -coverprofile=coverage.out -coverpkg=./... ./... > tests.json
+        plugins:
+          - mise#v1.1.5: ~
+          - wolfeidau/go-test-annotate#v1.0.0:
+              file: tests.json
