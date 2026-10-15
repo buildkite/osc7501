@@ -7,44 +7,37 @@
     "schedule:weekdays",
     "group:allNonMajor"
   ],
-  "labels": ["dependencies"],
+  "labels": [
+    "dependencies"
+  ],
   "prConcurrentLimit": 5,
   "prHourlyLimit": 2,
   "minimumReleaseAge": "3 days",
   "vulnerabilityAlerts": {
-    "labels": ["dependencies", "security"],
+    "labels": [
+      "dependencies",
+      "security"
+    ],
     "minimumReleaseAge": "0 days",
     "enabled": true
   },
-  "postUpdateOptions": ["gomodTidy"],
+  "postUpdateOptions": [
+    "gomodTidy"
+  ],
   "automerge": true,
   "automergeType": "pr",
   "platformAutomerge": true,
   "packageRules": [
     {
       "description": "Group Go minor and patch updates",
-      "matchManagers": ["gomod"],
-      "matchUpdateTypes": ["minor", "patch"],
-      "groupName": "go-minor-patch"
-    },
-    {
-      "description": "Group golang.org/x/ packages",
-      "matchSourceUrls": ["https://github.com/golang/**"],
-      "groupName": "golang-x"
-    },
-    {
-      "description": "Group OpenTelemetry packages",
-      "matchPackageNames": ["go.opentelemetry.io/**"],
-      "groupName": "opentelemetry"
-    },
-    {
-      "description": "Group Docker/Moby client packages",
-      "matchPackageNames": [
-        "github.com/docker/**",
-        "github.com/moby/**",
-        "github.com/containerd/**"
+      "matchManagers": [
+        "gomod"
       ],
-      "groupName": "docker"
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "go-minor-patch"
     },
     {
       "description": "Group test and dev tooling",
@@ -55,12 +48,16 @@
     },
     {
       "description": "Group Buildkite plugins",
-      "matchManagers": ["buildkite"],
+      "matchManagers": [
+        "buildkite"
+      ],
       "groupName": "buildkite-plugins"
     },
     {
       "description": "Do not automerge major updates",
-      "matchUpdateTypes": ["major"],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "automerge": false
     }
   ]
