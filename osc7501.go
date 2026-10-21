@@ -22,6 +22,8 @@ package osc7501
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -38,12 +40,25 @@ const (
 	maxTitleDec   = 192
 	maxMsgEnc     = 2732
 	maxMsgDec     = 2048
+
+	// maxBody is the longest body that fits in a sequence: ESC ] "7501;" body BEL.
+	maxBody = maxSequence - len("\x1b]7501;") - 1
 )
 
 // QueryReply is the feature-detection reply. It lists the rev 0.4 default
 // states and kinds, so its body differs from the query: if the PTY echoes it
 // back, Scanner does not mistake it for a new query (no reply loop).
 const QueryReply = "\x1b]7501;?:states=idle,working,done,blocked,error:kinds=permission,question,auth\x1b\\"
+
+// Errors returned by Parse, wrapped with the key or value that failed. Test
+// for them with errors.Is.
+var (
+	ErrNoState      = errors.New("osc7501: missing state")
+	ErrUnknownState = errors.New("osc7501: unknown state")
+	ErrLimit        = errors.New("osc7501: limit exceeded")
+	ErrInvalidID    = errors.New("osc7501: invalid id")
+	ErrInvalidText  = errors.New("osc7501: invalid text")
+)
 
 // Report is a decoded program status report.
 type Report struct {
@@ -52,8 +67,14 @@ type Report struct {
 }
 
 // Parse decodes the body of a report (the bytes between "7501;" and ST).
-// It returns false if the whole report must be ignored.
-func Parse(body []byte) (Report, bool) {
+// It returns an error if the whole report must be ignored. Every pair is checked
+// against the protocol limits, so a report that breaks one is rejected even
+// if a later duplicate key is valid. A body too long to fit in a 4096-byte
+// sequence is rejected; Scanner enforces the exact limit with framing.
+func Parse(body []byte) (Report, error) {
+	if len(body) > maxBody {
+		return Report{}, fmt.Errorf("%w: body is %d bytes, max %d", ErrLimit, len(body), maxBody)
+	}
 	vals := map[string]string{}
 	for _, pair := range bytes.Split(body, []byte{':'}) {
 		k, v, ok := bytes.Cut(pair, []byte{'='})
@@ -62,22 +83,45 @@ func Parse(body []byte) (Report, bool) {
 		}
 		key := string(bytes.TrimSpace(k))
 		val := string(bytes.TrimSpace(v))
+		if len(key) > maxKeyLen {
+			return Report{}, fmt.Errorf("%w: key is %d bytes, max %d", ErrLimit, len(key), maxKeyLen)
+		}
 		if !validKey(key) || !validValue(val) {
 			continue
+		}
+		var err error
+		switch key {
+		case "id":
+			if !ValidID(val) {
+				err = fmt.Errorf("%w: %q", ErrInvalidID, val)
+			}
+		case "app":
+			if len(val) > maxSegmentLen {
+				err = fmt.Errorf("%w: app is %d bytes, max %d", ErrLimit, len(val), maxSegmentLen)
+			}
+		case "title":
+			val, err = decodeText(key, val, maxTitleEnc, maxTitleDec)
+		case "msg":
+			val, err = decodeText(key, val, maxMsgEnc, maxMsgDec)
+		}
+		if err != nil {
+			return Report{}, err
 		}
 		vals[key] = val
 	}
 
-	r := Report{Progress: -1, State: vals["state"]}
-	if !validState(r.State) {
-		return Report{}, false
+	r := Report{
+		Progress: -1,
+		State:    vals["state"],
+		ID:       vals["id"],
+		Title:    vals["title"],
+		Msg:      vals["msg"],
 	}
-
-	if id, ok := vals["id"]; ok {
-		if !ValidID(id) {
-			return Report{}, false
-		}
-		r.ID = id
+	if r.State == "" {
+		return Report{}, ErrNoState
+	}
+	if !validState(r.State) {
+		return Report{}, fmt.Errorf("%w: %q", ErrUnknownState, r.State)
 	}
 
 	if r.State == StateBlocked {
@@ -95,19 +139,7 @@ func Parse(body []byte) (Report, bool) {
 	if a, ok := vals["app"]; ok && ValidSegment(a) {
 		r.App = a
 	}
-
-	var ok bool
-	if s, present := vals["title"]; present {
-		if r.Title, ok = decodeText(s, maxTitleEnc, maxTitleDec); !ok {
-			return Report{}, false
-		}
-	}
-	if s, present := vals["msg"]; present {
-		if r.Msg, ok = decodeText(s, maxMsgEnc, maxMsgDec); !ok {
-			return Report{}, false
-		}
-	}
-	return r, true
+	return r, nil
 }
 
 // Encode returns the full report sequence terminated by ESC \.
@@ -233,22 +265,29 @@ func parseProgress(s string) int {
 }
 
 // decodeText decodes base64 (padding optional) UTF-8 text enforcing limits.
-func decodeText(s string, maxEnc, maxDec int) (string, bool) {
+// key names the field in errors.
+func decodeText(key, s string, maxEnc, maxDec int) (string, error) {
 	if len(s) > maxEnc {
-		return "", false
+		return "", fmt.Errorf("%w: %s is %d bytes encoded, max %d", ErrLimit, key, len(s), maxEnc)
 	}
 	enc := base64.RawStdEncoding
 	if strings.HasSuffix(s, "=") {
 		enc = base64.StdEncoding
 	}
 	raw, err := enc.DecodeString(s)
-	if err != nil || len(raw) > maxDec || !utf8.Valid(raw) {
-		return "", false
+	if err != nil {
+		return "", fmt.Errorf("%w: %s is not valid base64", ErrInvalidText, key)
+	}
+	if len(raw) > maxDec {
+		return "", fmt.Errorf("%w: %s is %d bytes decoded, max %d", ErrLimit, key, len(raw), maxDec)
+	}
+	if !utf8.Valid(raw) {
+		return "", fmt.Errorf("%w: %s is not valid UTF-8", ErrInvalidText, key)
 	}
 	for _, c := range string(raw) {
 		if c < 0x20 || c == 0x7f || (c >= 0x80 && c <= 0x9f) {
-			return "", false
+			return "", fmt.Errorf("%w: %s contains control character %U", ErrInvalidText, key, c)
 		}
 	}
-	return string(raw), true
+	return string(raw), nil
 }

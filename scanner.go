@@ -130,7 +130,7 @@ func (s *Scanner) dispatch() {
 	if s.OnReport == nil {
 		return
 	}
-	if r, ok := Parse(body); ok {
+	if r, err := Parse(body); err == nil {
 		s.OnReport(r)
 	}
 }

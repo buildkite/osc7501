@@ -43,8 +43,8 @@ func TestReporterHelpers(t *testing.T) {
 			require.Equal(t, tt.want, buf.String())
 
 			body := strings.TrimSuffix(strings.TrimPrefix(buf.String(), "\x1b]7501;"), "\x1b\\")
-			got, ok := Parse([]byte(body))
-			require.True(t, ok)
+			got, err := Parse([]byte(body))
+			require.NoError(t, err)
 			require.Equal(t, tt.rep, got)
 		})
 	}
@@ -92,8 +92,8 @@ func TestEncodeSanitises(t *testing.T) {
 	buf.Reset()
 	require.NoError(t, r.Report(Report{State: "working", Title: strings.Repeat("é", 200), Progress: -1}))
 	body := strings.TrimSuffix(strings.TrimPrefix(buf.String(), "\x1b]7501;"), "\x1b\\")
-	got, ok := Parse([]byte(body))
-	require.True(t, ok)
+	got, err := Parse([]byte(body))
+	require.NoError(t, err)
 	require.LessOrEqual(t, len(got.Title), 192)
 	require.True(t, utf8.ValidString(got.Title))
 	require.Equal(t, strings.Repeat("é", 96), got.Title)

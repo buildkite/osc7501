@@ -53,10 +53,10 @@ Callbacks run after the report bytes have been forwarded to `W`. `QueryReply` li
 To decode a lone body (the bytes between `7501;` and the terminator), use `Parse`:
 
 ```go
-r, ok := osc7501.Parse([]byte("state=working:progress=50"))
+r, err := osc7501.Parse([]byte("state=working:progress=50"))
 ```
 
-`ok` is false when the whole report must be ignored.
+A non-nil error means the whole report must be ignored. It wraps one of `ErrNoState`, `ErrUnknownState`, `ErrLimit`, `ErrInvalidID` or `ErrInvalidText` (test with `errors.Is`) and names the field that failed, for example `osc7501: limit exceeded: app is 33 bytes, max 32`.
 
 ## Strip status
 
@@ -76,11 +76,14 @@ Call `Flush` at the end of the stream. Other escape sequences pass through uncha
 
 | Item | Limit |
 |------|-------|
-| Sequence | 4096 bytes |
+| Sequence | 4096 bytes (`Parse` rejects bodies over 4088) |
+| Key | 16 bytes |
 | id | 128 bytes, 8 levels (`/`-separated) |
 | id segment and app | `[A-Za-z0-9_.+-]{1,32}` |
-| title | 192 bytes decoded |
-| msg | 2048 bytes decoded |
+| title | 256 bytes encoded, 192 decoded |
+| msg | 2732 bytes encoded, 2048 decoded |
+
+A report that breaks a limit is discarded whole, including when a later duplicate key is valid.
 
 ## Known limitations
 
