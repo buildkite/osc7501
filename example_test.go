@@ -2,7 +2,9 @@ package osc7501_test
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/wolfeidau/osc7501"
 )
@@ -20,10 +22,14 @@ func ExampleReporter() {
 }
 
 func ExampleParse() {
-	r, ok := osc7501.Parse([]byte("state=blocked:id=deploy:kind=permission:msg=QXBwcm92ZT8"))
-	fmt.Println(ok, r.State, r.ID, r.Kind, r.Msg, r.Progress)
+	r, err := osc7501.Parse([]byte("state=blocked:id=deploy:kind=permission:msg=QXBwcm92ZT8"))
+	fmt.Println(err, r.State, r.ID, r.Kind, r.Msg, r.Progress)
+
+	_, err = osc7501.Parse([]byte("state=done:app=" + strings.Repeat("a", 33)))
+	fmt.Println(errors.Is(err, osc7501.ErrLimit), err)
 	// Output:
-	// true blocked deploy permission Approve? -1
+	// <nil> blocked deploy permission Approve? -1
+	// true osc7501: limit exceeded: app is 33 bytes, max 32
 }
 
 func ExampleScanner() {
