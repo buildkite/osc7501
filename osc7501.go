@@ -238,16 +238,16 @@ func ValidID(id string) bool {
 	if id == "" || len(id) > maxIDLen {
 		return false
 	}
-	segs := strings.Split(id, "/")
-	if len(segs) > maxIDLevels {
-		return false
-	}
-	for _, s := range segs {
-		if !ValidSegment(s) {
+	for levels := 1; ; levels++ {
+		seg, rest, more := strings.Cut(id, "/")
+		if levels > maxIDLevels || !ValidSegment(seg) {
 			return false
 		}
+		if !more {
+			return true
+		}
+		id = rest
 	}
-	return true
 }
 
 func parseProgress(s []byte) int {
