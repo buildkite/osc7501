@@ -12,7 +12,7 @@ Go library for the OSC 7501 "program status" terminal protocol (spec rev 0.4): e
 
 ## Conventions
 
-- Run `make quality` (vet, `go mod tidy -diff`, golangci-lint, tests) before committing. `make fuzz` runs the fuzz targets.
+- Run `make quality` (vet, `go mod tidy -diff`, golangci-lint, tests) before committing. `make fuzz` runs the fuzz targets. `make bench` runs the benchmarks.
 - Tests use `testify/require` only, never `assert`.
 - Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `chore:`).
 - Pre-1.0: breaking changes are allowed, bump the minor version, and must be documented in the commit message and release notes.
