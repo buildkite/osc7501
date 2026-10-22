@@ -75,48 +75,54 @@ func Parse(body []byte) (Report, error) {
 	if len(body) > maxBody {
 		return Report{}, fmt.Errorf("%w: body is %d bytes, max %d", ErrLimit, len(body), maxBody)
 	}
-	vals := map[string]string{}
-	for _, pair := range bytes.Split(body, []byte{':'}) {
+	// Known keys go straight into r; the last valid duplicate wins. Values are
+	// converted to strings only for known keys, so unknown keys cost nothing.
+	r := Report{Progress: -1}
+	var kind, app string
+	var progress []byte
+	var hasProgress, hasApp bool
+	for rest, more := body, true; more; {
+		var pair []byte
+		pair, rest, more = bytes.Cut(rest, []byte{':'})
 		k, v, ok := bytes.Cut(pair, []byte{'='})
 		if !ok {
 			continue
 		}
-		key := string(bytes.TrimSpace(k))
-		val := string(bytes.TrimSpace(v))
-		if len(key) > maxKeyLen {
-			return Report{}, fmt.Errorf("%w: key is %d bytes, max %d", ErrLimit, len(key), maxKeyLen)
+		k, v = bytes.TrimSpace(k), bytes.TrimSpace(v)
+		if len(k) > maxKeyLen {
+			return Report{}, fmt.Errorf("%w: key is %d bytes, max %d", ErrLimit, len(k), maxKeyLen)
 		}
-		if !validKey(key) || !validValue(val) {
+		if !validKey(k) || !validValue(v) {
 			continue
 		}
 		var err error
-		switch key {
+		switch string(k) {
+		case "state":
+			r.State = string(v)
 		case "id":
-			if !ValidID(val) {
-				err = fmt.Errorf("%w: %q", ErrInvalidID, val)
+			r.ID = string(v)
+			if !ValidID(r.ID) {
+				err = fmt.Errorf("%w: %q", ErrInvalidID, v)
 			}
+		case "kind":
+			kind = string(v)
+		case "progress":
+			progress, hasProgress = v, true
 		case "app":
-			if len(val) > maxSegmentLen {
-				err = fmt.Errorf("%w: app is %d bytes, max %d", ErrLimit, len(val), maxSegmentLen)
+			if len(v) > maxSegmentLen {
+				err = fmt.Errorf("%w: app is %d bytes, max %d", ErrLimit, len(v), maxSegmentLen)
 			}
+			app, hasApp = string(v), true
 		case "title":
-			val, err = decodeText(key, val, maxTitleEnc, maxTitleDec)
+			r.Title, err = decodeText("title", v, maxTitleEnc, maxTitleDec)
 		case "msg":
-			val, err = decodeText(key, val, maxMsgEnc, maxMsgDec)
+			r.Msg, err = decodeText("msg", v, maxMsgEnc, maxMsgDec)
 		}
 		if err != nil {
 			return Report{}, err
 		}
-		vals[key] = val
 	}
 
-	r := Report{
-		Progress: -1,
-		State:    vals["state"],
-		ID:       vals["id"],
-		Title:    vals["title"],
-		Msg:      vals["msg"],
-	}
 	if r.State == "" {
 		return Report{}, ErrNoState
 	}
@@ -124,20 +130,16 @@ func Parse(body []byte) (Report, error) {
 		return Report{}, fmt.Errorf("%w: %q", ErrUnknownState, r.State)
 	}
 
-	if r.State == StateBlocked {
-		if k := vals["kind"]; validKind(k) {
-			r.Kind = k
-		}
+	if r.State == StateBlocked && validKind(kind) {
+		r.Kind = kind
 	}
 
-	if r.State == StateWorking || r.State == StateBlocked {
-		if p, ok := vals["progress"]; ok {
-			r.Progress = parseProgress(p)
-		}
+	if (r.State == StateWorking || r.State == StateBlocked) && hasProgress {
+		r.Progress = parseProgress(progress)
 	}
 
-	if a, ok := vals["app"]; ok && ValidSegment(a) {
-		r.App = a
+	if hasApp && ValidSegment(app) {
+		r.App = app
 	}
 	return r, nil
 }
@@ -192,8 +194,8 @@ func cleanText(s string, max int) string {
 	return s[:max]
 }
 
-func validKey(k string) bool {
-	if k == "" || len(k) > maxKeyLen {
+func validKey(k []byte) bool {
+	if len(k) == 0 || len(k) > maxKeyLen {
 		return false
 	}
 	for i := 0; i < len(k); i++ {
@@ -208,7 +210,7 @@ func isAlnum(c byte) bool {
 	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
 }
 
-func validValue(v string) bool {
+func validValue(v []byte) bool {
 	for i := 0; i < len(v); i++ {
 		if !isAlnum(v[i]) && strings.IndexByte("_.,+/=-", v[i]) < 0 {
 			return false
@@ -248,17 +250,18 @@ func ValidID(id string) bool {
 	return true
 }
 
-func parseProgress(s string) int {
-	if s == "" || len(s) > 3 {
+func parseProgress(s []byte) int {
+	if len(s) == 0 || len(s) > 3 {
 		return -1
 	}
-	for i := 0; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
+	n := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
 			return -1
 		}
+		n = n*10 + int(c-'0')
 	}
-	n, err := strconv.Atoi(s)
-	if err != nil || n > 100 {
+	if n > 100 {
 		return -1
 	}
 	return n
@@ -266,18 +269,20 @@ func parseProgress(s string) int {
 
 // decodeText decodes base64 (padding optional) UTF-8 text enforcing limits.
 // key names the field in errors.
-func decodeText(key, s string, maxEnc, maxDec int) (string, error) {
+func decodeText(key string, s []byte, maxEnc, maxDec int) (string, error) {
 	if len(s) > maxEnc {
 		return "", fmt.Errorf("%w: %s is %d bytes encoded, max %d", ErrLimit, key, len(s), maxEnc)
 	}
 	enc := base64.RawStdEncoding
-	if strings.HasSuffix(s, "=") {
+	if bytes.HasSuffix(s, []byte{'='}) {
 		enc = base64.StdEncoding
 	}
-	raw, err := enc.DecodeString(s)
+	raw := make([]byte, enc.DecodedLen(len(s)))
+	n, err := enc.Decode(raw, s)
 	if err != nil {
 		return "", fmt.Errorf("%w: %s is not valid base64", ErrInvalidText, key)
 	}
+	raw = raw[:n]
 	if len(raw) > maxDec {
 		return "", fmt.Errorf("%w: %s is %d bytes decoded, max %d", ErrLimit, key, len(raw), maxDec)
 	}

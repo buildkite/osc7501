@@ -1,5 +1,7 @@
 package osc7501
 
+import "bytes"
+
 // Stripper removes complete OSC 7501 sequences (reports and queries) from a
 // byte stream. It frames sequences exactly as Scanner does, so it removes
 // precisely the sequences Scanner would report. State persists across Strip
@@ -19,12 +21,20 @@ type Stripper struct {
 // Strip returns p with complete OSC 7501 sequences removed. The result may
 // alias p.
 func (s *Stripper) Strip(p []byte) []byte {
-	if s.state == stGround && len(s.held) == 0 && indexESC(p) < 0 {
+	if s.state == stGround && len(s.held) == 0 && bytes.IndexByte(p, 0x1b) < 0 {
 		return p
 	}
 	out := make([]byte, 0, len(p)+len(s.held))
-	for _, c := range p {
-		out = s.step(out, c)
+	for i := 0; i < len(p); i++ {
+		if s.state == stGround { // copy plain text up to the next ESC in one go
+			j := bytes.IndexByte(p[i:], 0x1b)
+			if j < 0 {
+				return append(out, p[i:]...)
+			}
+			out = append(out, p[i:i+j]...)
+			i += j
+		}
+		out = s.step(out, p[i])
 	}
 	return out
 }
@@ -38,15 +48,6 @@ func (s *Stripper) Flush() []byte {
 	}
 	*s = Stripper{held: s.held[:0]}
 	return out
-}
-
-func indexESC(p []byte) int {
-	for i, c := range p {
-		if c == 0x1b {
-			return i
-		}
-	}
-	return -1
 }
 
 func (s *Stripper) release(out []byte) []byte {

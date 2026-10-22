@@ -1,6 +1,9 @@
 package osc7501
 
-import "io"
+import (
+	"bytes"
+	"io"
+)
 
 type scanState uint8
 
@@ -31,8 +34,15 @@ type Scanner struct {
 // bytes of p accepted by W and that error.
 func (s *Scanner) Write(p []byte) (int, error) {
 	start := 0
-	for i, c := range p {
-		if !s.step(c) {
+	for i := 0; i < len(p); i++ {
+		if s.state == stGround { // only ESC leaves ground: skip straight to it
+			j := bytes.IndexByte(p[i:], 0x1b)
+			if j < 0 {
+				break
+			}
+			i += j
+		}
+		if !s.step(p[i]) {
 			continue
 		}
 		// Complete 7501 sequence ending at p[i]: forward first, then callback.
