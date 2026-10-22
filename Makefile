@@ -1,6 +1,6 @@
 # osc7501 Makefile
 
-.PHONY: help test test-race fuzz lint check quality
+.PHONY: help test test-race bench fuzz lint check quality
 
 help: ## Show this help message
 	@echo "Available targets:"
@@ -11,6 +11,9 @@ test: ## Run all tests
 
 test-race: ## Run tests with race detector
 	go test -race -v ./...
+
+bench: ## Run benchmarks (compare runs with benchstat)
+	go test -run '^$$' -bench . -benchmem -count 10 .
 
 fuzz: ## Run each fuzz target for 20s
 	go test -fuzz FuzzStripper -fuzztime 20s .
