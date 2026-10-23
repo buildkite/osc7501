@@ -9,7 +9,7 @@ This package was written with the help of an AI coding assistant (Claude Code by
 ## Install
 
 ```bash
-go get github.com/wolfeidau/osc7501
+go get github.com/buildkite/osc7501
 ```
 
 ## Emit status
@@ -92,10 +92,6 @@ A report that breaks a limit is discarded whole, including when a later duplicat
 ## Stability
 
 Pre-1.0. The package tracks spec rev 0.4. Breaking changes bump the minor version and are documented in release notes.
-
-## Used by
-
-[console-stream](https://github.com/wolfeidau/console-stream) streams process output and turns reports into `ProgramStatus` events.
 
 ## License
 

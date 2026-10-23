@@ -1,4 +1,4 @@
-module github.com/wolfeidau/osc7501
+module github.com/buildkite/osc7501
 
 go 1.26
 
