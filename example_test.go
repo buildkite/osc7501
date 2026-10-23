@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/wolfeidau/osc7501"
+	"github.com/buildkite/osc7501"
 )
 
 func ExampleReporter() {
