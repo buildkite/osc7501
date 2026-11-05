@@ -27,6 +27,9 @@ var (
 		return b.Bytes()
 	}()
 	benchPlain = bytes.Repeat([]byte(strings.Repeat("x", 79)+"\n"), 1600)
+	// benchANSI is coloured output, such as test runner output, with no OSC
+	// sequences.
+	benchANSI = bytes.Repeat([]byte("\x1b[32mok\x1b[0m  \x1b[1mpkg/thing\x1b[0m "+strings.Repeat("x", 52)+"\n"), 1600)
 )
 
 func BenchmarkParse(b *testing.B) {
@@ -72,7 +75,7 @@ func BenchmarkStripper(b *testing.B) {
 	for _, bc := range []struct {
 		name string
 		in   []byte
-	}{{"plain", benchPlain}, {"reports", benchStream}} {
+	}{{"plain", benchPlain}, {"ansi", benchANSI}, {"reports", benchStream}} {
 		b.Run(bc.name, func(b *testing.B) {
 			var s Stripper
 			b.ReportAllocs()
