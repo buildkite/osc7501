@@ -56,6 +56,19 @@ func TestStripperHoldsUntilResolved(t *testing.T) {
 	require.Equal(t, "x", string(st.Strip([]byte("x"))))
 }
 
+func TestStripperPassesThroughOtherEscapes(t *testing.T) {
+	var st Stripper
+	in := []byte("\x1b[32mok\x1b[0m\x1bM\n")
+	out := st.Strip(in)
+	require.Equal(t, string(in), string(out))
+	require.Same(t, &in[0], &out[0], "output should alias input")
+
+	// An ESC at the end may start an OSC in the next write.
+	require.Equal(t, "a", string(st.Strip([]byte("a\x1b"))))
+	require.Empty(t, st.Strip([]byte("]7501;state=done\x07")))
+	require.Equal(t, "\x1b[0m", string(st.Strip([]byte("\x1b[0m"))))
+}
+
 func FuzzStripper(f *testing.F) {
 	f.Add([]byte("a\x1b]7501;state=working\x07b"), uint(5))
 	f.Add([]byte("\x1b]7501;?\x1b\\\x1b]0;t\x07"), uint(3))

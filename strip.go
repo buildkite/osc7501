@@ -21,7 +21,7 @@ type Stripper struct {
 // Strip returns p with complete OSC 7501 sequences removed. The result may
 // alias p.
 func (s *Stripper) Strip(p []byte) []byte {
-	if s.state == stGround && len(s.held) == 0 && bytes.IndexByte(p, 0x1b) < 0 {
+	if s.state == stGround && len(s.held) == 0 && !mayStartOSC(p) {
 		return p
 	}
 	out := make([]byte, 0, len(p)+len(s.held))
@@ -37,6 +37,14 @@ func (s *Stripper) Strip(p []byte) []byte {
 		out = s.step(out, p[i])
 	}
 	return out
+}
+
+// mayStartOSC reports whether p, read from the ground state, could begin an
+// OSC sequence: it contains ESC ], or ends with an ESC that the next write may
+// follow with ]. Other escape sequences, such as colour codes, pass through
+// the Stripper unchanged, so p can be returned as it is.
+func mayStartOSC(p []byte) bool {
+	return bytes.Contains(p, []byte("\x1b]")) || (len(p) > 0 && p[len(p)-1] == 0x1b)
 }
 
 // Flush returns any bytes still held (for example an unterminated sequence at
