@@ -50,12 +50,20 @@ func BenchmarkParse(b *testing.B) {
 }
 
 func BenchmarkScanner(b *testing.B) {
+	benchmarkScanner(b, func(Report) {}, nil)
+}
+
+func BenchmarkScannerOffsets(b *testing.B) {
+	benchmarkScanner(b, nil, func(Report, uint64, uint64) {})
+}
+
+func benchmarkScanner(b *testing.B, onReport func(Report), onOffsets func(Report, uint64, uint64)) {
 	for _, bc := range []struct {
 		name string
 		in   []byte
 	}{{"plain", benchPlain}, {"reports", benchStream}} {
 		b.Run(bc.name, func(b *testing.B) {
-			s := &Scanner{W: io.Discard, OnReport: func(Report) {}}
+			s := &Scanner{W: io.Discard, OnReport: onReport, OnReportWithOffsets: onOffsets}
 			b.ReportAllocs()
 			b.SetBytes(int64(len(bc.in)))
 			for b.Loop() {
