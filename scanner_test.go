@@ -3,6 +3,7 @@ package osc7501
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -13,6 +14,13 @@ type capture struct {
 	out     bytes.Buffer
 	reports []Report
 	queries int
+	ranges  []offsetReport
+}
+
+type offsetReport struct {
+	Report Report
+	Start  uint64
+	End    uint64
 }
 
 func (c *capture) scanner() *Scanner {
@@ -20,6 +28,9 @@ func (c *capture) scanner() *Scanner {
 		W:        &c.out,
 		OnReport: func(r Report) { c.reports = append(c.reports, r) },
 		OnQuery:  func() { c.queries++ },
+		OnReportWithOffsets: func(r Report, start, end uint64) {
+			c.ranges = append(c.ranges, offsetReport{r, start, end})
+		},
 	}
 }
 
@@ -202,6 +213,105 @@ func TestScannerWriteError(t *testing.T) {
 	require.False(t, called)
 }
 
+func TestScannerOffsetCallbacks(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		old, spans bool
+		want       []string
+	}{
+		{"old only", true, false, []string{"old"}},
+		{"offsets only", false, true, []string{"offsets"}},
+		{"both", true, true, []string{"old", "offsets"}},
+		{"neither", false, false, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := []byte("α\n\x1b]7501;state=working:progress=0\x07z\n" +
+				"\x1b]7501;state=bogus\x07\x1b]7501;?\x07" + QueryReply)
+			var out bytes.Buffer
+			var calls []string
+			queries := 0
+			s := &Scanner{W: &out, OnQuery: func() { queries++ }}
+			checkReport := func(r Report) {
+				require.Equal(t, Report{State: "working", Progress: 0}, r)
+				require.Equal(t, 35, out.Len(), "callback runs before trailing bytes")
+			}
+			if tc.old {
+				s.OnReport = func(r Report) {
+					checkReport(r)
+					calls = append(calls, "old")
+				}
+			}
+			if tc.spans {
+				s.OnReportWithOffsets = func(r Report, start, end uint64) {
+					checkReport(r)
+					require.Equal(t, uint64(3), start)
+					require.Equal(t, uint64(35), end)
+					calls = append(calls, "offsets")
+				}
+			}
+			for _, chunk := range [][]byte{in[:8], nil, in[8:34], in[34:]} {
+				n, err := s.Write(chunk)
+				require.NoError(t, err)
+				require.Equal(t, len(chunk), n)
+			}
+			require.Equal(t, tc.want, calls)
+			require.Equal(t, 1, queries)
+			require.Equal(t, in, out.Bytes())
+		})
+	}
+}
+
+// errorAtWriter also returns an error when a write fills its limit exactly.
+type errorAtWriter struct {
+	remaining int
+	out       bytes.Buffer
+}
+
+func (w *errorAtWriter) Write(p []byte) (int, error) {
+	n := min(len(p), w.remaining)
+	w.out.Write(p[:n])
+	w.remaining -= n
+	if w.remaining == 0 {
+		return n, errors.New("write limit reached")
+	}
+	return n, nil
+}
+
+func TestScannerOffsetWriteError(t *testing.T) {
+	for _, tc := range []struct {
+		name, terminator string
+		end              uint64
+	}{
+		{"BEL", "\x07", 21},
+		{"ST", "\x1b\\", 22},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := []byte("abc\x1b]7501;state=done" + tc.terminator + "trailing")
+			end := len(in) - len("trailing")
+			for _, limit := range []int{2, end - 1, end, end + 2, len(in)} {
+				t.Run(fmt.Sprint(limit), func(t *testing.T) {
+					w := &errorAtWriter{remaining: limit}
+					c := &capture{}
+					s := c.scanner()
+					s.W = w
+					n, err := s.Write(in)
+					require.Error(t, err)
+					require.Equal(t, limit, n)
+					require.Equal(t, in[:limit], w.out.Bytes())
+					if limit <= end {
+						require.Empty(t, c.reports)
+						require.Empty(t, c.ranges)
+					} else {
+						r := Report{State: "done", Progress: -1}
+						require.Equal(t, []Report{r}, c.reports)
+						require.Equal(t, []offsetReport{{r, 3, tc.end}}, c.ranges)
+					}
+				})
+			}
+		})
+	}
+}
+
 func FuzzScanner(f *testing.F) {
 	seeds := [][]byte{
 		wantReport.Encode(),
@@ -218,19 +328,24 @@ func FuzzScanner(f *testing.F) {
 		f.Add(s, uint16(3), uint16(11))
 	}
 	f.Fuzz(func(t *testing.T, data []byte, a, b uint16) {
-		var out bytes.Buffer
-		s := &Scanner{W: &out, OnReport: func(Report) {}, OnQuery: func() {}}
 		i := int(a) % (len(data) + 1)
 		j := int(b) % (len(data) + 1)
 		if i > j {
 			i, j = j, i
 		}
-		for _, chunk := range [][]byte{data[:i], data[i:j], data[j:]} {
-			n, err := s.Write(chunk)
-			require.NoError(t, err)
-			require.Equal(t, len(chunk), n)
+		whole := feed(t, data)
+		parts := feed(t, data, i, j)
+		require.Equal(t, string(data), whole.out.String())
+		require.Equal(t, string(data), parts.out.String())
+		require.Equal(t, whole.reports, parts.reports)
+		require.Equal(t, whole.queries, parts.queries)
+		require.Equal(t, whole.ranges, parts.ranges)
+		for _, r := range parts.ranges {
+			require.Less(t, r.Start, r.End)
+			require.LessOrEqual(t, r.End, uint64(len(data)))
+			require.LessOrEqual(t, r.End-r.Start, uint64(4096))
+			require.True(t, bytes.HasPrefix(data[r.Start:r.End], []byte("\x1b]7501;")))
 		}
-		require.Equal(t, string(data), out.String())
 	})
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/buildkite/osc7501"
@@ -49,6 +50,19 @@ func ExampleScanner() {
 	// Output:
 	// report: working build 50
 	// downstream: "start\n\x1b]7501;state=working:id=build:progress=50\x1b\\end\n"
+}
+
+func ExampleScanner_offsets() {
+	s := &osc7501.Scanner{
+		W: io.Discard,
+		OnReportWithOffsets: func(r osc7501.Report, start, end uint64) {
+			fmt.Printf("%s progress=%d at [%d,%d)\n", r.State, r.Progress, start, end)
+		},
+	}
+	_, _ = s.Write([]byte("α\n\x1b]75"))
+	_, _ = s.Write([]byte("01;state=working:progress=0\x07z\n"))
+	// Output:
+	// working progress=0 at [3,35)
 }
 
 func ExampleStripper() {

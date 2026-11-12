@@ -50,6 +50,21 @@ _, _ = io.Copy(s, childOutput)
 
 Callbacks run after the report bytes have been forwarded to `W`. `QueryReply` lists the default states and kinds; its body differs from the query, so an echoed reply does not trigger another query.
 
+For original byte ranges, set the optional `OnReportWithOffsets` callback:
+
+```go
+s := &osc7501.Scanner{
+	W: io.Discard,
+	OnReportWithOffsets: func(r osc7501.Report, start, end uint64) {
+		fmt.Printf("%s at [%d,%d)\n", r.State, start, end)
+	},
+}
+```
+
+Offsets are zero-based and end-exclusive, including the original introducer and BEL or ST terminator. They count every input byte across writes, including UTF-8, unrelated escape sequences and invalid reports. They do not refer to a re-encoded report. The callback works without `OnReport`; when both are set, `OnReport` runs first with the same parsed report. Invalid reports and queries do not invoke either report callback.
+
+Use one scanner for the lifetime of a stream. An incomplete sequence at EOF emits nothing; use a new scanner for the next stream. A downstream write error suppresses callbacks for a sequence whose terminator was in that failed write, even if the sink returned its full byte count. Earlier successful callbacks remain valid. Discard the scanner after an error; retrying the unaccepted suffix on it is unsupported. The downstream writer must obey the `io.Writer` contract.
+
 To decode a lone body (the bytes between `7501;` and the terminator), use `Parse`:
 
 ```go

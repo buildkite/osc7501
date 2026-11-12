@@ -19,20 +19,30 @@ const prefix = "7501;"
 // Scanner is an io.Writer that forwards every byte to W unchanged while
 // recognising OSC 7501 reports and queries. Sequences may be split across
 // Write calls at any byte. Callbacks run after all bytes up to and including
-// the sequence terminator have been written to W.
+// the sequence terminator have been written to W, before later trailing bytes.
+// Use a new Scanner for each stream and discard it after a downstream error.
 type Scanner struct {
 	W        io.Writer // downstream; receives all bytes unchanged
 	OnReport func(Report)
 	OnQuery  func()
 
+	// OnReportWithOffsets receives the same parsed report after OnReport,
+	// when both are set. start and end bound the original sequence including
+	// its introducer and terminator: zero-based, end-exclusive byte offsets
+	// across all Write calls. It also runs when OnReport is nil.
+	OnReportWithOffsets func(report Report, start, end uint64)
+
 	state   scanState
 	matched bool   // OSC so far is a candidate 7501 sequence
 	buf     []byte // OSC content after "ESC ]" while matched
+	offset  uint64 // bytes supplied across Write calls
 }
 
 // Write implements io.Writer. On a downstream error it returns the number of
 // bytes of p accepted by W and that error.
 func (s *Scanner) Write(p []byte) (int, error) {
+	base := s.offset
+	s.offset += uint64(len(p))
 	start := 0
 	for i := 0; i < len(p); i++ {
 		if s.state == stGround { // only ESC leaves ground: skip straight to it
@@ -50,7 +60,11 @@ func (s *Scanner) Write(p []byte) (int, error) {
 			return start + n, err
 		}
 		start = i + 1
-		s.dispatch()
+		terminatorLen := uint64(1)
+		if p[i] == '\\' {
+			terminatorLen = 2
+		}
+		s.dispatch(base+uint64(i+1), terminatorLen)
 	}
 	if start < len(p) {
 		n, err := s.W.Write(p[start:])
@@ -129,7 +143,7 @@ func (s *Scanner) finish(stLen int) bool {
 	return s.matched && len(s.buf) >= len(prefix) && 2+len(s.buf)+stLen <= maxSequence
 }
 
-func (s *Scanner) dispatch() {
+func (s *Scanner) dispatch(end, terminatorLen uint64) {
 	body := s.buf[len(prefix):]
 	if string(body) == "?" {
 		if s.OnQuery != nil {
@@ -137,10 +151,17 @@ func (s *Scanner) dispatch() {
 		}
 		return
 	}
-	if s.OnReport == nil {
+	if s.OnReport == nil && s.OnReportWithOffsets == nil {
 		return
 	}
 	if r, err := Parse(body); err == nil {
-		s.OnReport(r)
+		if s.OnReport != nil {
+			s.OnReport(r)
+		}
+		if s.OnReportWithOffsets != nil {
+			// buf retains the original bytes, not a re-encoded report.
+			start := end - 2 - uint64(len(s.buf)) - terminatorLen
+			s.OnReportWithOffsets(r, start, end)
+		}
 	}
 }
